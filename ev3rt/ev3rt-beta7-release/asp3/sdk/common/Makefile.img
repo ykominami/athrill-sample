@@ -122,8 +122,11 @@ DEVTOOLDIR = @(DEVTOOLDIR)
 #  ユーティリティプログラムの名称
 #
 CFG = @(CFG)
-TECSGEN = @(TECSGEN)
-
+ifdef TECSGEN_EXE
+    TECSGEN = $(TECSGEN_EXE)
+else
+    TECSGEN = @(TECSGEN)
+endif
 #
 #  オブジェクトファイル名の定義
 #
