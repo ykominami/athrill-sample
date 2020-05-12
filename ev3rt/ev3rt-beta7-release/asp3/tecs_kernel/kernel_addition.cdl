@@ -1,0 +1,8 @@
+/*
+ * タスクを起こす周期ハンドラの処理の本体
+ */
+celltype tCyclicTaskActivator{
+	entry siHandlerBody eiBody;
+	call  siTask        ciTask;
+};
+
