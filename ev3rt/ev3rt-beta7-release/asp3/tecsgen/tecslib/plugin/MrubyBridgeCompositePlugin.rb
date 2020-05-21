@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 #
-#  mruby => TECS bridge
+#  TECS Generator
+#      Generator for TOPPERS Embedded Component System
 #  
 #   Copyright (C) 2008-2017 by TOPPERS Project
-#
+#--
 #   上記著作権者は，以下の(1)〜(4)の条件を満たす場合に限り，本ソフトウェ
 #   ア（本ソフトウェアを改変したものを含む．以下同じ）を使用・複製・改
 #   変・再配布（以下，利用と呼ぶ）することを無償で許諾する．
@@ -33,36 +34,18 @@
 #   アの利用により直接的または間接的に生じたいかなる損害に関しても，そ
 #   の責任を負わない．
 #  
-#   $Id: MrubyBridgePlugin.rb 2952 2018-05-07 10:19:07Z okuma-top $
-#
+#   $Id: MrubyBridgeCompositePlugin.rb 2952 2018-05-07 10:19:07Z okuma-top $
+#++
 
-#== MrubyBridgePlugin クラス
-class MrubyBridgePlugin < MultiPlugin
-  def self.get_plugin superClass
-    # case when (つまりは ===) では、期待したように一致しない模様
-    if superClass == SignaturePlugin then
-      dbgPrint "MrubyBridgePlugin: SignaturePlugin"
-      require_tecsgen_lib 'tecslib/plugin/MrubyBridgeSignaturePlugin.rb'
-      return MrubyBridgeSignaturePlugin
-    elsif superClass == CelltypePlugin
-      dbgPrint "MrubyBridgePlugin: CelltypePlugin"
-      require_tecsgen_lib 'tecslib/plugin/MrubyBridgeCelltypePlugin.rb'
-      return MrubyBridgeCelltypePlugin
-    elsif superClass == CompositePlugin
-      dbgPrint "MrubyBridgePlugin: CompositePlugin"
-      require_tecsgen_lib 'tecslib/plugin/MrubyBridgeCompositePlugin.rb'
-      return MrubyBridgeCompositePlugin
-    elsif superClass == CellPlugin
-      dbgPrint "MrubyBridgePlugin: CellPlugin"
-      require_tecsgen_lib 'tecslib/plugin/MrubyBridgeCellPlugin.rb'
-      return MrubyBridgeCellPlugin
-    #elsif superClass == ThroughPlugin
-    #  return ThroughPlugin
-    #elsif superClass == DomainPlugin
-    #  return DomainPlugin
-    else
-      dbgPrint "MrubyBridgePlugin: unsupported"
-      return nil
-    end
+require_tecsgen_lib 'tecslib/plugin/lib/MrubyBridgeCelltypePluginModule.rb'
+
+#== MrubyBridgeCompositePlugin
+class MrubyBridgeCompositePlugin < CompositePlugin
+  dbgPrint "MrubyBridgeCompositePlugin loaded\n"
+  include MrubyBridgeCelltypePluginModule
+
+  def self.gen_post_code( file )
+    MrubyBridgeCelltypePluginModule.gen_post_code file
   end
 end
+

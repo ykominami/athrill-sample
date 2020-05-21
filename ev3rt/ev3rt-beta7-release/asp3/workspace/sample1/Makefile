@@ -116,23 +116,21 @@ DEVTOOLDIR =
 #  ユーティリティプログラムの名称
 #
 CFG = ruby $(SRCDIR)/cfg/cfg.rb
-#CFG = ruby $(SRCDIR)/cfg-1.6.0/cfg/cfg.rb
-#TECSGEN = ruby $(SRCDIR)/tecsgen/tecsgen.rb
-TECSGEN = ruby $(SRCDIR)/tecsgen-1.7.0/tecsgen/tecsgen.rb
-ifndef TECSGEN_EXE
-    TECSGEN_EXE = $(TECSGEN)
-endif
 #
 #  TECSインタフェースジェネレータ関係の定義
 # tecsgen.rb (ruby + racc)を利用する場合は下記のRUBYLIBとTECSGENの定義を利用する
 
-TECSGEN_DIR_17 = ../../tecsgen-1.7.0/tecsgen
-TECSGEN_TOP_DIR = $(TECSGEN_DIR_17)
+TECSGEN_DIR = ../../tecsgen
+TECSGEN_TOP_DIR = $(TECSGEN_DIR)
 #RUBYLIB = $(SRCDIR)/tecsgen/tecsgen
 #RUBYLIB = $(SRCDIR)/tecsgen
-RUBYLIB = $(TECSGEN_DIR_17)
-#TECSGEN_DIR = $(RUBYLIB)
-TECSGEN = $(RUBY) $(TECSGEN_DIR_17)/tecsgen.rb -L $(RUBYLIB) -k euc --cpp="$(GCC_TARGET_PREFIX)gcc -E"
+RUBYLIB = $(TECSGEN_TOP_DIR)
+#TECSGEN = $(RUBY) $(TECSGEN_TOP_DIR)/tecsgen.rb -L $(RUBYLIB) -k euc --cpp="$(GCC_TARGET_PREFIX)gcc -E"
+TECSGEN = $(RUBY) $(TECSGEN_TOP_DIR)/tecsgen.rb -L $(RUBYLIB) -cpp="$(GCC_TARGET_PREFIX)gcc -E"
+
+ifndef TECSGEN_EXE
+    TECSGEN_EXE = $(TECSGEN)
+endif
 
 TECSLIB_DIR = $(SRCDIR)/tecs_lib
 MRUBY_LIB_DIR = $(SRCDIR)/mruby_lib

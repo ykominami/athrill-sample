@@ -34,7 +34,7 @@
 #   アの利用により直接的または間接的に生じたいかなる損害に関しても，そ
 #   の責任を負わない．
 #  
-#   $Id: GenTransparentMarshaler.rb 2952 2018-05-07 10:19:07Z okuma-top $
+#   $Id: GenHRP2Marshaler.rb 2952 2018-05-07 10:19:07Z okuma-top $
 #++
 
 #プラグインオプション用変数
@@ -105,8 +105,8 @@ module GenTransparentMarshaler
     @channelCellName = "#{cell_name}_Channel"
     @PPAllocatorSize = nil
 
-    @marshaler_celltype_name = "tMarshaler_#{@signature.get_global_name}"
-    @unmarshaler_celltype_name = "tUnmarshaler_#{@signature.get_global_name}"
+    @marshaler_celltype_name = "tMarshaler_#{@signature.get_name}"
+    @unmarshaler_celltype_name = "tUnmarshaler_#{@signature.get_name}"
     @marshaler_celltype_file_name = "#{$gen}/#{@marshaler_celltype_name}.cdl"
   end
 
@@ -121,21 +121,28 @@ module GenTransparentMarshaler
     f = CFile.open( @marshaler_celltype_file_name, "w" )
     # 同じ内容を二度書く可能性あり (AppFile は不可)
 
+    # modified by ishikawa
     f.print <<EOT
 
 celltype #{@marshaler_celltype_name} {
-  entry #{@signature.get_namespace_path} eClientEntry;
-  call sTDR        cTDR;
+  entry #{@signature.get_name} eClientEntry;
   call sEventflag  cEventflag;
-  [optional]
-    call sSemaphore cLockChannel;  // this port is eliminated by optimize
+  call sSemaphore  cSemaphore;
+  call sMessageBuffer cMessageBuffer;
+  //[optional]
+  //  call sSemaphore cLockChannel;  // this port is eliminated by optimize
 };
 celltype #{@unmarshaler_celltype_name} {
-  call #{@signature.get_namespace_path} cServerCall;
-  call sTDR        cTDR;
+  call #{@signature.get_name} cServerCall;
   call sEventflag  cEventflag;
-  entry sUnmarshalerMain  eUnmarshalAndCallFunction;
-#{alloc_call_port}};
+  call sSemaphore  cSemaphore;
+  call sMessageBuffer cMessageBuffer;
+  entry sTaskBody  eUnmarshalAndCallFunction;
+#{alloc_call_port}
+  FACTORY{
+    write("$ct$_factory.h", "#include <t_syslog.h>");
+  };
+};
 EOT
     f.close
   end
@@ -162,7 +169,7 @@ EOT
     type = func_type.get_type.get_original_type
 
     # 戻り値記憶用の変数を出力（void 型の関数では出力しない）
-    if ! type.is_void? then
+    if ! type.kind_of?( VoidType ) then
       if func_type.get_type.kind_of?( DefinedType ) && ( func_type.get_type.get_type_str == "ER" || func_type.get_type.get_type_str == "ER_INT" ) then
         file.print( "    #{func_type.get_type.get_type_str}  retval_ = E_OK;\n" )
         b_ret_er = true
@@ -182,6 +189,8 @@ EOT
     # 関数 ID （整数値）
     func_id = signature.get_id_from_func_name( func_name )
     file.print( "    int16_t  func_id_ = #{func_id};    /* id of #{func_name}: #{func_id} */\n" )
+
+    file.print( "    uint8_t  msg[256];\n" )
 
     # シングルトンでないか？
     if ! b_singleton then
@@ -212,21 +221,26 @@ EOT
 
     # channel lock コード
     file.print <<EOT
-    /* Channel Lock */
-    if( is_cLockChannel_joined() )
-      cLockChannel_wait();
+    ///* Channel Lock */
+    //if( is_cLockChannel_joined() )
+    //  cLockChannel_wait();
 
 EOT
 
+=begin
     # SOP を送信
     file.print "    /* SOPの送出 */\n"
     file.print "    if( ( ercd_ = cTDR_sendSOP( true ) ) != E_OK )\n"
     file.print "      goto error_reset;\n"
+=end
 
     # func_id を送信
     file.print "    /* 関数 id の送出 */\n"
+=begin
     file.print "    if( ( ercd_ = cTDR_putInt16( func_id_ ) ) != E_OK )\n"
     file.print "        goto error_reset;\n"
+=end
+    file.print "    *((int16_t *)(&msg[0])) = func_id_;\n"   
 
     # p "celltype_name, sig_name, func_name, func_global_name"
     # p "#{ct_name}, #{sig_name}, #{func_name}, #{func_global_name}"
@@ -235,13 +249,16 @@ EOT
     b_marshal = true  # marshal
 
     # in 方向の入出力を出力
+    @index = 2
     file.print "    /* 入力引数送出 */\n"
     print_params( params, file, 1, b_marshal, b_get, true, func_type.is_oneway? )
     print_params( params, file, 1, b_marshal, b_get, false, func_type.is_oneway? )
+=begin
     if ! b_void && ! func_type.is_oneway? then
       ret_ptr_type = PtrType.new( func_type.get_type )
       print_param_nc( "retval_", ret_ptr_type, file, 1, :RETURN, "&", nil, b_get )
     end
+=end
 
     file.print "    /* EOPの送出（パケットの掃きだし） */\n"
     if ! func_type.is_oneway? then
@@ -249,8 +266,14 @@ EOT
     else
       b_continue = "false"
     end
+=begin
     file.print "    if( (ercd_=cTDR_sendEOP(#{b_continue})) != E_OK )\n"
     file.print "        goto error_reset;\n\n"
+=end
+    file.print "    if( (ercd_=cMessageBuffer_send(msg, #{@index})) != E_OK )\n"
+    file.print "        goto error_reset;\n\n"
+
+    file.print "        cSemaphore_signal();\n\n"
 
     if ! func_type.is_oneway? then
       file.print <<EOT
@@ -266,13 +289,14 @@ EOT
     end # ! func_type.is_oneway?
 
     file.print <<EOT
-    /* Channel Lock */
-    if( is_cLockChannel_joined() )
-      cLockChannel_signal();
+    ///* Channel Lock */
+    //if( is_cLockChannel_joined() )
+    //  cLockChannel_signal();
 EOT
 
     if( b_void == false )then
       # 呼び元に戻り値をリターン
+      file.print( "    cMessageBuffer_receive(&retval_);\n" )
       file.print( "    return retval_;\n" )
     else
       file.print( "    return;\n" )
@@ -281,15 +305,17 @@ EOT
     file.print <<EOT
 
 error_reset:
+#if 0
     if( ercd_ != ERCD( E_RPC, E_RESET ) )
         (void)cTDR_reset();
+#endif
 EOT
 
     # channel lock コード
     file.print <<EOT
-    /* Channel Lock */
-    if( is_cLockChannel_joined() )
-      cLockChannel_signal();
+    ///* Channel Lock */
+    //if( is_cLockChannel_joined() )
+    //  cLockChannel_signal();
 
 EOT
 
@@ -336,12 +362,20 @@ EOT
 
     file.print <<EOT
 
+    cSemaphore_wait();
+
+#if 0
     /* SOPのチェック */
     if( (ercd_=cTDR_receiveSOP( false )) != E_OK )
         goto error_reset;
     /* func_id の取得 */
     if( (ercd_=cTDR_getInt16( &func_id_ )) != E_OK )
         goto error_reset;
+#endif
+
+    if( (ercd_ = cMessageBuffer_receive(msg) < 0 ) )
+        goto error_reset;
+    func_id_ = ((int16_t *)msg)[0];
 
 #ifdef RPC_DEBUG
     syslog(LOG_INFO, "unmarshaler task: func_id: %d", func_id_ );
@@ -361,7 +395,7 @@ EOT
       id = signature.get_id_from_func_name( f_name )
 
       # 関数は返り値を持つか?
-      if f_type.get_type.is_void? then
+      if f_type.get_type.kind_of?( VoidType ) then
         b_void = true
       else
         b_void = false
@@ -369,7 +403,7 @@ EOT
 
       # パケットの終わりをチェック（未受け取りのデータが残っていないかチェック）
       file.print "    case #{id}:       /*** #{f_name} ***/ \n"
-      file.print "        if( tTransparentUnmarshaler_#{@signature.get_global_name}_#{f_name}() != E_OK )\n"
+      file.print "        if( tTransparentUnmarshaler_#{@signature.get_name}_#{f_name}() != E_OK )\n"
       file.print "            goto error_reset;\n"
       file.print "        break;\n"
 
@@ -384,16 +418,22 @@ EOT
 
     file.print <<EOT
     default:
+#if 0 // deleted by ishikawa: tSysLogが未実装
         syslog(LOG_INFO, "unmarshaler task: ERROR: unknown func_id: %d", func_id_ );
+#endif /* 0 */
+        break;
     };
 #{ppallocator_dealloc_str}
-    return E_OK;
+    return;
 
 error_reset:
+#if 0
     if( ercd_ != ERCD( E_RPC, E_RESET ) )
         (void)cTDR_reset();
+#else
+    return ercd_;
+#endif
 #{ppallocator_dealloc_str}
-    return E_OK;
 EOT
 
   end
@@ -416,7 +456,7 @@ EOT
         # oneway, in, PtrType の場合コピー
         alloc_cp = "cPPAllocator_alloc"
         alloc_cp_extra = nil
-        print_param( param.get_name, type, file, nest, dir, nil, nil, b_marshal, b_get, alloc_cp, alloc_cp_extra )
+        print_param( param.get_name, type, file, nest, dir, nil, nil, b_get, alloc_cp, alloc_cp_extra )
       else
         if( b_get == false && b_marshal == true || b_get == true && b_marshal == false  )then
           case dir
@@ -518,14 +558,40 @@ EOT
       if( b_get )then
         cast_str.gsub!( /\)$/, "*)" )
         file.print "    " * nest
+=begin
         file.print "if( ( ercd_ = cTDR_get#{type_str}( #{cast_str}&(#{outer}#{name}#{outer2}) ) ) != E_OK )\n"
         file.print "    " * nest
         file.print "    goto error_reset;\n"
+=end
+        file.print "#{name} = *((#{type.get_type_str} *)(&msg[#{@index}]));\n"
+        if bit_size.nil?
+            raise "HRP2 RPC supports only specified bit_size"
+        else
+            case bit_size
+            when 8, 16, 32, 64, 128
+            else
+                raise "HRP2 RPC supports only specified bit_size"
+            end
+        end
+        @index += bit_size / 8
       else
         file.print "    " * nest
+=begin
         file.print "if( ( ercd_ = cTDR_put#{type_str}( #{cast_str}#{outer}#{name}#{outer2} ) ) != E_OK )\n"
         file.print "    " * nest
         file.print "    goto error_reset;\n"
+=end
+        file.print "*((#{type.get_type_str} *)(&msg[#{@index}])) = #{name};\n"
+        if bit_size.nil?
+            raise "HRP2 RPC supports only specified bit_size"
+        else
+            case bit_size
+            when 8, 16, 32, 64, 128
+            else
+                raise "HRP2 RPC supports only specified bit_size"
+            end
+        end
+        @index += bit_size / 8
       end
 
     when StructType
@@ -561,8 +627,10 @@ EOT
       f_name = f.get_name
       f_type = f.get_declarator.get_type
       id = @signature.get_id_from_func_name( f_name )
-      file.print "static ER  tTransparentUnmarshaler_#{@signature.get_global_name}_#{f_name}();\t/* func_id: #{id} */\n"
+      file.print "static ER  tTransparentUnmarshaler_#{@signature.get_name}_#{f_name}();\t/* func_id: #{id} */\n"
     }
+    file.print "\n"
+    file.print "static uint8_t msg[256];\n"
     file.print "\n"
   end
 
@@ -580,7 +648,7 @@ EOT
       id = @signature.get_id_from_func_name( f_name )
 
       # 関数は返り値を持つか?
-      if f_type.get_type.is_void? then
+      if f_type.get_type.kind_of?( VoidType ) then
         b_void = true
       else
         b_void = false
@@ -593,10 +661,9 @@ EOT
  */
 EOT
       file.print "static ER\n"
-      file.print "tTransparentUnmarshaler_#{@signature.get_global_name}_#{f_name}()\n"
+      file.print "tTransparentUnmarshaler_#{@signature.get_name}_#{f_name}()\n"
       file.print "{\n"
       file.print "	ER  ercd_;\n"
-      file.print "	CELLCB  *p_cellcb;\n"
 
       # 引数を受取る変数の定義
       param_list = f.get_declarator.get_type.get_paramlist.get_items
@@ -623,7 +690,10 @@ EOT
         if f.is_oneway? then
           retval_ptr = ""   # oneway の場合、受け取るが捨てられる
         else
-          retval_ptr = "*"
+          # =begin ishikawa modified
+          # retval_ptr = "*"
+          retval_ptr = ""
+          # =end ishikawa modified
         end
         file.printf( "    %-12s #{retval_ptr}retval_%s;\n", f_type.get_type.get_type_str, f_type.get_type.get_type_str_post )
       end
@@ -632,13 +702,15 @@ EOT
       file.print "\n        /* 入力引数受取 */\n"
       b_get = true    # unmarshal では get
       b_marshal  = false
+      @index = 2
       print_params( param_list, file, 1, b_marshal, b_get, true, f.is_oneway? )
       print_params( param_list, file, 1, b_marshal, b_get, false, f.is_oneway? )
+=begin
       if ! b_void && ! f.is_oneway? then
         ret_ptr_type = PtrType.new( f_type.get_type )
         print_param_nc( "retval_", ret_ptr_type, file, 2, :RETURN, nil, nil, b_get )
       end
-
+=end
       # パケットの受信完了
       # mikan 本当は、対象関数を呼出す後に実施したい．呼出しパケットの使用終わりを宣言する目的として
       file.print "        /* パケット終わりをチェック */\n"
@@ -647,9 +719,10 @@ EOT
       else
         b_continue = "false"
       end
+=begin
       file.print "    if( (ercd_=cTDR_receiveEOP(#{b_continue})) != E_OK )\n"
       file.print "        goto error_reset;\n\n"
-
+=end
       # 対象関数を呼出す
       file.print "    /* 対象関数の呼出し */\n"
       if b_void then
@@ -668,6 +741,11 @@ EOT
 
       # 戻り値、出力引数の受取コードの生成
 
+      if ! b_void && ! f.is_oneway? then
+        file.print "    if( (ercd_ = cMessageBuffer_send(&retval_, sizeof(#{f_type.get_type.get_type_str})) != E_OK ) )\n"
+        file.print "        goto error_reset;\n"
+
+      end
       # oneway の場合出力、戻り値が無く、受取を待たない（非同期な呼出し）
       if ! f.is_oneway? then
         file.print <<EOT
